@@ -4,12 +4,12 @@ import io
 import json
 import re
 import pandas as pd
-from flask import Flask, request, jsonify, Response, make_response
+from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
-import openai
+from litellm import completion
 
 # Load environment variables
 load_dotenv()
@@ -35,15 +35,66 @@ limiter = Limiter(
 )
 print("Flask-Limiter initialized.")
 
-# --- OpenAI Client Initialization --- (Same as before)
-openai_client = None
-if openai:
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    if not OPENAI_API_KEY: print("\n*** WARNING: OPENAI_API_KEY not set. ***\n")
-    else:
-        try: openai_client = openai.OpenAI(); print("OpenAI client initialized.")
-        except Exception as e: print(f"\n*** ERROR: Failed to initialize OpenAI client: {e} ***\n"); openai_client = None
-else: print("\n*** WARNING: OpenAI library not imported. ***\n")
+# --- LiteLLM Provider Configuration ---
+PROVIDER_CONFIGS = {
+    "openai": {
+        "display_name": "OpenAI",
+        "env_var": "OPENAI_API_KEY",
+        "default_model": "openai/gpt-4o-mini",
+        "models": {
+            "openai/gpt-4o-mini": "GPT-4o mini",
+            "openai/gpt-4.1-mini": "GPT-4.1 mini",
+            "openai/gpt-4.1-nano": "GPT-4.1 nano",
+        },
+    },
+    "gemini": {
+        "display_name": "Gemini",
+        "env_var": "GEMINI_API_KEY",
+        "default_model": "gemini/gemini-2.0-flash-lite",
+        "models": {
+            "gemini/gemini-2.0-flash-lite": "Gemini 2.0 Flash-Lite",
+            "gemini/gemini-2.0-flash": "Gemini 2.0 Flash",
+            "gemini/gemini-1.5-flash": "Gemini 1.5 Flash",
+        },
+    },
+    "groq": {
+        "display_name": "Groq",
+        "env_var": "GROQ_API_KEY",
+        "default_model": "groq/llama-3.1-8b-instant",
+        "models": {
+            "groq/llama-3.1-8b-instant": "Llama 3.1 8B Instant",
+            "groq/gemma2-9b-it": "Gemma 2 9B IT",
+            "groq/llama-3.3-70b-versatile": "Llama 3.3 70B Versatile",
+        },
+    },
+    "anthropic": {
+        "display_name": "Anthropic",
+        "env_var": "ANTHROPIC_API_KEY",
+        "default_model": "anthropic/claude-3-5-haiku-latest",
+        "models": {
+            "anthropic/claude-3-5-haiku-latest": "Claude 3.5 Haiku",
+        },
+    },
+    "openai_compatible": {
+        "display_name": "OpenAI-Compatible",
+        "env_var": "OPENAI_COMPATIBLE_API_KEY",
+        "env_base_var": "OPENAI_COMPATIBLE_BASE_URL",
+        "allow_custom_model": True,
+        "requires_base_url": True,
+    },
+}
+
+configured_providers = [
+    config["display_name"]
+    for config in PROVIDER_CONFIGS.values()
+    if os.getenv(config["env_var"])
+]
+if configured_providers:
+    print(f"LiteLLM providers configured via environment: {', '.join(configured_providers)}")
+else:
+    print("\n*** WARNING: No provider API keys configured in environment. Users must supply an API key in the UI. ***\n")
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 # --- Custom Error Handler for 413 Request Entity Too Large ---
@@ -63,11 +114,60 @@ def ratelimit_handler(e):
     return jsonify(error=f"Rate limit exceeded: {e.description}"), 429
 
 
-# --- LLM Classification Function (classify_text_with_llm) ---
-# ... (This function remains exactly the same as in backend_code_v5_limits / v3_openai) ...
-def classify_text_with_llm(text_to_classify, categories):
-    if not openai_client: return {"label": "error", "justification": "OpenAI client not available."}
-    if not text_to_classify: return {"label": "no category", "justification": "Input text was empty."}
+# --- LLM Classification Function ---
+def get_provider_config(provider_name):
+    return PROVIDER_CONFIGS.get((provider_name or "").strip().lower())
+
+
+def get_api_key(provider_name, request_api_key=""):
+    provider_config = get_provider_config(provider_name)
+    if not provider_config:
+        return ""
+    if request_api_key and request_api_key.strip():
+        return request_api_key.strip()
+    return os.getenv(provider_config["env_var"], "").strip()
+
+
+def get_api_base(provider_name, request_api_base=""):
+    provider_config = get_provider_config(provider_name)
+    if not provider_config or not provider_config.get("requires_base_url"):
+        return ""
+    if request_api_base and request_api_base.strip():
+        return request_api_base.strip().rstrip("/")
+    env_base_var = provider_config.get("env_base_var")
+    return os.getenv(env_base_var, "").strip().rstrip("/") if env_base_var else ""
+
+
+def get_model_name(provider_name, requested_model_name=""):
+    provider_config = get_provider_config(provider_name)
+    if not provider_config:
+        return None
+    model_name = (requested_model_name or "").strip()
+    if provider_config.get("allow_custom_model"):
+        if not model_name:
+            return None
+        return model_name if model_name.startswith("openai/") else f"openai/{model_name}"
+    if not model_name:
+        return provider_config["default_model"]
+    if model_name in provider_config["models"]:
+        return model_name
+    return None
+
+
+def classify_text_with_llm(text_to_classify, categories, provider_name, model_name, api_key, api_base=""):
+    provider_config = get_provider_config(provider_name)
+    if not provider_config:
+        return {"label": "error", "justification": "Unsupported model provider."}
+    if not model_name:
+        return {"label": "error", "justification": "Unsupported model for selected provider."}
+    if not api_key:
+        return {
+            "label": "error",
+            "justification": f"{provider_config['display_name']} API key not provided.",
+        }
+    if not text_to_classify:
+        return {"label": "no category", "justification": "Input text was empty."}
+
     category_definitions = "\n".join([f"- **{cat['label']}**: {cat['description']}" for cat in categories])
     system_prompt = f"""
 You are a text classification assistant. Your task is to classify the user's text based *only* on the categories provided below.
@@ -79,27 +179,42 @@ Label: <Chosen Label or "no category">
 Justification: <Your brief explanation>
 """
     user_prompt = f"Please classify the following text:\n\n\"{text_to_classify}\""
-    print(f"\n--- Sending Prompt to OpenAI for text starting: '{text_to_classify[:60]}...' ---")
+    print(
+        f"\n--- Sending prompt to {provider_config['display_name']} ({model_name}) "
+        f"for text starting: '{text_to_classify[:60]}...' ---"
+    )
     try:
-        model_name = "gpt-4o-mini-2024-07-18"
-        response = openai_client.chat.completions.create( model=model_name, messages=[ {"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt} ], temperature=0.5, max_tokens=100 )
-        print("--- Received OpenAI Response ---")
-        response_text = response.choices[0].message.content.strip()
+        completion_kwargs = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.5,
+            "max_tokens": 100,
+            "api_key": api_key,
+        }
+        if api_base:
+            completion_kwargs["api_base"] = api_base
+        response = completion(**completion_kwargs)
+        print(f"--- Received {provider_config['display_name']} response ---")
+        response_content = response.choices[0].message.content
+        response_text = response_content.strip() if isinstance(response_content, str) else str(response_content).strip()
         label, justification = "error", "Could not parse LLM response."
         label_match = re.search(r"^Label:\s*(.*)", response_text, re.MULTILINE | re.IGNORECASE)
         justification_match = re.search(r"^Justification:\s*(.*)", response_text, re.MULTILINE | re.IGNORECASE)
         if label_match:
             label = label_match.group(1).strip()
             valid_labels = [cat['label'] for cat in categories] + ['no category']
-            if label.lower() not in [vl.lower() for vl in valid_labels]: print(f"Warning: OpenAI returned invalid label '{label}'.")
+            if label.lower() not in [vl.lower() for vl in valid_labels]:
+                print(f"Warning: {provider_config['display_name']} returned invalid label '{label}'.")
         if justification_match: justification = justification_match.group(1).strip()
         if label == "error" and response_text: justification = f"Failed parse. Raw: {response_text[:100]}..."
         print(f"Parsed Label: '{label}', Justification: '{justification[:60]}...'")
         return {"label": label, "justification": justification}
-    except openai.APIError as e: print(f"!!! OpenAI API Error: {e}"); justification = f"OpenAI API Error: {e}"
-    except openai.APIConnectionError as e: print(f"!!! OpenAI Connection Error: {e}"); justification = f"OpenAI Connection Error: {e}"
-    except openai.RateLimitError as e: print(f"!!! OpenAI Rate Limit Error: {e}"); justification = f"OpenAI Rate Limit Error: {e}"
-    except Exception as e: print(f"!!! ERROR during OpenAI call/parsing: {e}"); justification = f"LLM API call failed: {e}"
+    except Exception as e:
+        print(f"!!! ERROR during {provider_config['display_name']} call/parsing: {e}")
+        justification = f"{provider_config['display_name']} API call failed: {e}"
     return {"label": "error", "justification": justification}
 
 
@@ -108,16 +223,32 @@ Justification: <Your brief explanation>
 @app.route('/classify', methods=['POST'])
 @limiter.limit("3 per hour")
 def classify_csv():
-    # ... (Rest of the function is identical to backend_code_v5_limits) ...
     print("\n=== Received request on /classify ===")
     # 1. --- Input Validation ---
     if 'csv_file' not in request.files: return jsonify({"error": "No file part"}), 400
     file = request.files['csv_file']
     if file.filename == '': return jsonify({"error": "No selected file"}), 400
+    provider_name = request.form.get('model_provider', '').strip().lower()
+    provider_config = get_provider_config(provider_name)
+    if not provider_config:
+        supported_providers = ", ".join(PROVIDER_CONFIGS.keys())
+        return jsonify({"error": f"Unsupported model provider. Choose one of: {supported_providers}"}), 400
+    model_name = get_model_name(provider_name, request.form.get('model_name', ''))
+    if not model_name:
+        return jsonify({"error": f"Unsupported model for {provider_config['display_name']}."}), 400
+    api_base = get_api_base(provider_name, request.form.get('base_url', ''))
+    if provider_config.get("requires_base_url") and not api_base:
+        return jsonify({"error": f"Base URL missing for {provider_config['display_name']}."}), 400
+    api_key = get_api_key(provider_name, request.form.get('api_key', ''))
+    if not api_key:
+        return jsonify({"error": f"API key missing for {provider_config['display_name']}."}), 400
     if not request.form.get('text_column'): return jsonify({"error": "Text column name missing"}), 400
     if not request.form.get('categories'): return jsonify({"error": "Categories definition missing"}), 400
     text_column_name = request.form['text_column']
     categories_json_string = request.form['categories']
+    print(f"Using provider: {provider_config['display_name']} ({model_name})")
+    if api_base:
+        print(f"Using API base: {api_base}")
     try: # Category validation
         categories_list = json.loads(categories_json_string)
         if not isinstance(categories_list, list) or not categories_list: raise ValueError("Categories must be a non-empty list.")
@@ -153,16 +284,16 @@ def classify_csv():
     results_labels = []; results_justifications = []; row_count = 0
     if df.empty: print("DataFrame empty. Skipping processing.")
     else:
-        print(f"Starting OpenAI classification for {len(df)} rows...")
+        print(f"Starting {provider_config['display_name']} classification with {model_name} for {len(df)} rows...")
         try:
             for index, row in df.iterrows():
                  row_count += 1; text_to_classify_raw = row[text_column_name]; text_to_classify = str(text_to_classify_raw) if pd.notna(text_to_classify_raw) else ""
                  if not text_to_classify.strip(): label, justification = "no category", "Text field empty."
-                 else: llm_result = classify_text_with_llm(text_to_classify, categories_list); label = llm_result.get("label", "error"); justification = llm_result.get("justification", "Error retrieving justification.")
+                 else: llm_result = classify_text_with_llm(text_to_classify, categories_list, provider_name, model_name, api_key, api_base); label = llm_result.get("label", "error"); justification = llm_result.get("justification", "Error retrieving justification.")
                  results_labels.append(label); results_justifications.append(justification)
                  if row_count % 10 == 0 or row_count == len(df): print(f"  Processed {row_count}/{len(df)} rows...")
         except Exception as e: print(f"!!! Error during processing loop near row {row_count}: {e}"); return jsonify({"error": f"Processing error near row {row_count}: {e}"}), 500
-        print("Finished OpenAI classification processing.")
+        print(f"Finished {provider_config['display_name']} classification processing.")
     df['Assigned Category'] = results_labels; df['Justification'] = results_justifications
 
     # 4. --- Generate Output CSV ---
@@ -177,12 +308,24 @@ def classify_csv():
     print("Sending CSV response.")
     return Response( csv_data, mimetype="text/csv", headers={ "Content-Disposition": "attachment;filename=classified_output.csv", "Content-Type": "text/csv; charset=utf-8" } )
 
-# Basic route (Same)
 @app.route('/')
-def index(): return "Backend server running: OpenAI + CSV/Excel + Limits!"
+def index():
+    return send_from_directory(PROJECT_ROOT, 'index.html')
+
+
+@app.route('/privacy')
+@app.route('/privacy.html')
+def privacy():
+    return send_from_directory(PROJECT_ROOT, 'privacy.html')
+
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "ok"})
 
 # Main execution block (Same)
 if __name__ == '__main__':
-    if not openai_client: print("\n--- NOTE: Server starting, OpenAI client not configured. '/classify' will fail. ---\n")
-    app.run(debug=True, port=5000)
+    if not configured_providers:
+        print("\n--- NOTE: Server starting without provider API keys in environment. Users must supply one in the UI. ---\n")
+    app.run(debug=True, port=int(os.getenv("PORT", "5000")))
 

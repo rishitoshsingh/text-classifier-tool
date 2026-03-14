@@ -30,12 +30,14 @@
         label { display: block; margin-bottom: 8px; font-weight: 700; color: var(--subtle-text-color); }
         .label-with-info { display: flex; align-items: center; gap: 5px; margin-bottom: 8px; }
         .label-with-info label { margin-bottom: 0; }
-        input[type="text"], textarea { width: 100%; padding: 10px 12px; margin-bottom: 5px; border: 1px solid var(--input-border); border-radius: var(--border-radius); box-sizing: border-box; font-family: 'Noto Sans', sans-serif; font-size: 0.95rem; background-color: #fff; color: var(--text-color); }
+        input[type="text"], input[type="password"], select, textarea { width: 100%; padding: 10px 12px; margin-bottom: 5px; border: 1px solid var(--input-border); border-radius: var(--border-radius); box-sizing: border-box; font-family: 'Noto Sans', sans-serif; font-size: 0.95rem; background-color: #fff; color: var(--text-color); }
         textarea { min-height: 70px; resize: vertical; }
-        input[type="text"]:focus, textarea:focus { border-color: var(--input-focus-border); outline: none; box-shadow: 0 0 0 0.2rem var(--input-focus-shadow); }
-        input.invalid, textarea.invalid { border-color: var(--danger-color); box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25); }
+        input[type="text"]:focus, input[type="password"]:focus, select:focus, textarea:focus { border-color: var(--input-focus-border); outline: none; box-shadow: 0 0 0 0.2rem var(--input-focus-shadow); }
+        input.invalid, select.invalid, textarea.invalid { border-color: var(--danger-color); box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25); }
         .char-counter { font-size: 0.8rem; color: var(--subtle-text-color); text-align: right; display: block; margin-bottom: 10px; height: 1em; }
         .char-counter.warning { color: var(--warning-dark); font-weight: bold; }
+        .helper-text { display: block; font-size: 0.85rem; color: var(--subtle-text-color); margin-top: 4px; }
+        .hidden { display: none !important; }
         button { padding: 9px 15px; border: 1px solid transparent; border-radius: var(--border-radius); cursor: pointer; font-family: 'Noto Sans', sans-serif; font-size: 0.95rem; font-weight: 700; transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out; margin-right: 8px; margin-bottom: 5px; vertical-align: middle; }
         button:hover { opacity: 0.9; }
         button:disabled { background-color: #e9ecef !important; color: #6c757d !important; border-color: #ced4da !important; cursor: not-allowed; opacity: 0.65; box-shadow: none; }
@@ -78,6 +80,8 @@
         .info-icon:hover { background-color: var(--secondary-hover); }
         .tooltip-popup { position: absolute; background-color: #333; color: white; padding: 8px 12px; border-radius: var(--border-radius); box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 1000; font-size: 0.85rem; max-width: 250px; display: none; }
         .submission-controls { display: flex; align-items: center; }
+        .llm-config-grid { display: flex; flex-wrap: wrap; gap: 20px; }
+        .llm-config-item { flex: 1; min-width: 250px; }
         #results-preview-section { margin-top: 20px; display: none; }
         #results-preview-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
         #results-preview-table th, #results-preview-table td { border: 1px solid var(--section-border); padding: 8px 10px; text-align: left; vertical-align: top; }
@@ -90,25 +94,61 @@
     <div class="container">
         <div class="main-title-container"> <h1 class="main-title">Classifyit</h1> <p class="sub-title">Text classification tool</p> </div>
         <form id="classification-form">
+            <section id="provider-section">
+                 <h2>1. Choose Provider & Model</h2>
+                 <div class="llm-config-grid">
+                     <div class="llm-config-item">
+                         <div class="label-with-info"> <label for="model-provider">Model provider</label> <span class="info-icon" data-tooltip="Choose which provider to use. The model list below will update automatically.">?</span> </div>
+                         <select id="model-provider" name="model-provider" required>
+                             <option value="openai">OpenAI</option>
+                             <option value="gemini">Gemini</option>
+                             <option value="groq">Groq</option>
+                             <option value="anthropic">Anthropic</option>
+                             <option value="openai_compatible">OpenAI-Compatible</option>
+                         </select>
+                         <span class="helper-text">Free or low-cost options are prioritized where possible.</span>
+                     </div>
+                     <div class="llm-config-item" id="model-select-wrapper">
+                         <div class="label-with-info"> <label for="model-name">Model</label> <span class="info-icon" data-tooltip="Pick a model for the selected provider. Labels note whether a model is usually free-tier friendly or simply low cost.">?</span> </div>
+                         <select id="model-name" name="model-name" required></select>
+                         <span class="helper-text" id="provider-model-hint">Recommended: GPT-4o mini</span>
+                     </div>
+                     <div class="llm-config-item hidden" id="custom-model-wrapper">
+                         <div class="label-with-info"> <label for="custom-model-name">Model name</label> <span class="info-icon" data-tooltip="For OpenAI-compatible APIs, enter the upstream model id. You can enter either `model-name` or `openai/model-name`.">?</span> </div>
+                         <input type="text" id="custom-model-name" name="custom-model-name" placeholder="e.g. mistral-small or openai/mistral-small" autocomplete="off">
+                         <span class="helper-text" id="custom-model-hint">This will be sent to LiteLLM as `openai/&lt;model&gt;` if no prefix is provided.</span>
+                     </div>
+                     <div class="llm-config-item">
+                         <div class="label-with-info"> <label for="provider-api-key">API key</label> <span class="info-icon" data-tooltip="This key is sent with the current request so the backend can call the selected provider. It is not saved by the page.">?</span> </div>
+                         <input type="password" id="provider-api-key" name="provider-api-key" placeholder="Enter your OpenAI API key" autocomplete="off" required>
+                         <span class="helper-text">Used only for the current request.</span>
+                     </div>
+                     <div class="llm-config-item hidden" id="base-url-wrapper">
+                         <div class="label-with-info"> <label for="provider-base-url">Base URL</label> <span class="info-icon" data-tooltip="Required for OpenAI-compatible APIs. Use the base endpoint, typically ending with `/v1`.">?</span> </div>
+                         <input type="text" id="provider-base-url" name="provider-base-url" placeholder="e.g. https://your-endpoint.example.com/v1" autocomplete="off">
+                         <span class="helper-text">Enter the API base URL, usually including `/v1`.</span>
+                     </div>
+                 </div>
+            </section>
             <section id="file-upload-section">
-                 <h2>1. Upload File (Max 30kb)</h2>
+                 <h2>2. Upload File (Max 30kb)</h2>
                  <div class="file-input-group">
                      <div class="file-input-wrapper"> <label for="csv-file">Select CSV or Excel file:</label> <label for="csv-file" class="custom-file-upload" title="Select a .csv or .xlsx file for classification">Choose File</label> <input type="file" id="csv-file" name="csv-file" accept=".csv, .xls, .xlsx, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required> <span id="file-name-display">No file selected.</span> <button type="button" id="clear-file-btn" title="Clear selected file">&times;</button> </div>
                      <div class="text-column-wrapper"> <div class="label-with-info"> <label for="text-column">Column to classify</label> <span class="info-icon" data-tooltip="Enter the exact column header name from your file that contains the text to classify.">?</span> </div> <input type="text" id="text-column" name="text-column" required maxlength="50" title="Enter the exact column header name from your file that contains the text to classify"> <span class="char-counter" id="char-counter-column">0/50</span> </div>
                  </div>
             </section>
             <section id="category-definition-section">
-                 <h2> 2. Define Categories (Max 10) <span class="info-icon" data-tooltip="For Category Label - Enter a short, unique label (max 50 chars, letters/numbers/spaces/_ only). For Description - Describe what this category means (max 300 chars).">?</span> </h2>
+                 <h2> 3. Define Categories (Max 10) <span class="info-icon" data-tooltip="For Category Label - Enter a short, unique label (max 50 chars, letters/numbers/spaces/_ only). For Description - Describe what this category means (max 300 chars).">?</span> </h2>
                  <div id="category-list"> </div>
                  <div class="category-controls"> <button type="button" id="add-category-btn">+ Add Category</button> <button type="button" id="save-categories-btn">Save Categories</button> <button type="button" id="load-categories-btn">Load Categories</button> </div>
             </section>
             <section id="submission-section">
-                  <h2>3. Classify & Download</h2>
+                  <h2>4. Classify & Download</h2>
                   <div class="submission-controls"> <button type="submit" id="submit-btn">Submit for Classification</button> <span class="info-icon" data-tooltip="Click to start the classification process. Allow time for the process to be completed. Once done, the file will be automatically downloaded.">?</span> <button type="button" id="cancel-btn" title="Cancel the current classification process">Cancel</button> </div>
                   <div id="status-area"> <p id="status-message">Status: Ready</p> <div id="loading-indicator" class="spinner"></div> </div>
             </section>
             <section id="results-preview-section">
-                <h2>4. Results Preview (First 5 Rows)</h2>
+                <h2>5. Results Preview (First 5 Rows)</h2>
                 <div id="results-preview-container"> </div>
             </section>
         </form>
@@ -132,10 +172,56 @@
             const CATEGORIES_STORAGE_KEY = 'textClassifierUserCategories';
             const ALLOWED_LABEL_REGEX = /^[a-zA-Z0-9\s_]*$/; const DISALLOWED_LABEL_REGEX = /[^a-zA-Z0-9\s_]/g;
             const PREVIEW_ROW_LIMIT = 5;
+            const PROVIDER_MODELS = {
+                openai: {
+                    apiKeyLabel: 'OpenAI',
+                    models: [
+                        { value: 'openai/gpt-4o-mini', label: 'GPT-4o mini', note: 'low cost', recommended: true },
+                        { value: 'openai/gpt-4.1-mini', label: 'GPT-4.1 mini', note: 'low cost' },
+                        { value: 'openai/gpt-4.1-nano', label: 'GPT-4.1 nano', note: 'lowest cost' }
+                    ]
+                },
+                gemini: {
+                    apiKeyLabel: 'Gemini',
+                    models: [
+                        { value: 'gemini/gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', note: 'free-tier friendly', recommended: true },
+                        { value: 'gemini/gemini-2.0-flash', label: 'Gemini 2.0 Flash', note: 'free-tier friendly' },
+                        { value: 'gemini/gemini-1.5-flash', label: 'Gemini 1.5 Flash', note: 'free-tier friendly' }
+                    ]
+                },
+                groq: {
+                    apiKeyLabel: 'Groq',
+                    models: [
+                        { value: 'groq/llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant', note: 'free-tier friendly', recommended: true },
+                        { value: 'groq/gemma2-9b-it', label: 'Gemma 2 9B IT', note: 'free-tier friendly' },
+                        { value: 'groq/llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile', note: 'often low cost' }
+                    ]
+                },
+                anthropic: {
+                    apiKeyLabel: 'Anthropic',
+                    models: [
+                        { value: 'anthropic/claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku', note: 'low cost', recommended: true }
+                    ]
+                },
+                openai_compatible: {
+                    apiKeyLabel: 'OpenAI-compatible',
+                    requiresBaseUrl: true,
+                    customModel: true
+                }
+            };
             let statusClearTimeout = null;
             let currentAbortController = null;
             const form = document.getElementById('classification-form'); const csvFileInput = document.getElementById('csv-file');
             const fileNameDisplay = document.getElementById('file-name-display'); const textColumnInput = document.getElementById('text-column');
+            const providerSelect = document.getElementById('model-provider'); const apiKeyInput = document.getElementById('provider-api-key');
+            const modelSelect = document.getElementById('model-name');
+            const customModelInput = document.getElementById('custom-model-name');
+            const baseUrlInput = document.getElementById('provider-base-url');
+            const providerModelHint = document.getElementById('provider-model-hint');
+            const modelSelectWrapper = document.getElementById('model-select-wrapper');
+            const customModelWrapper = document.getElementById('custom-model-wrapper');
+            const baseUrlWrapper = document.getElementById('base-url-wrapper');
+            const customModelHint = document.getElementById('custom-model-hint');
             const categoryListDiv = document.getElementById('category-list'); const addCategoryBtn = document.getElementById('add-category-btn');
             const saveCategoriesBtn = document.getElementById('save-categories-btn'); const loadCategoriesBtn = document.getElementById('load-categories-btn');
             const submitBtn = document.getElementById('submit-btn'); const statusMessage = document.getElementById('status-message');
@@ -150,12 +236,14 @@
             addCategoryBtn.addEventListener('click', handleAddCategoryClick); saveCategoriesBtn.addEventListener('click', saveCategories);
             loadCategoriesBtn.addEventListener('click', loadCategories); form.addEventListener('submit', handleFormSubmit);
             cancelBtn.addEventListener('click', handleCancelClick);
+            providerSelect.addEventListener('change', handleProviderChange);
             categoryListDiv.addEventListener('click', handleCategoryListClick); categoryListDiv.addEventListener('input', handleCategoryInput);
             textColumnInput.addEventListener('input', handleColumnInput);
             allInfoIcons.forEach(icon => { icon.addEventListener('click', (event) => { event.stopPropagation(); const tooltipText = icon.getAttribute('data-tooltip'); if (tooltipText) { showTooltip(icon, tooltipText); } }); });
             document.addEventListener('click', () => { hideTooltip(); });
             function showTooltip(targetElement, text) { globalTooltip.innerHTML = text; const rect = targetElement.getBoundingClientRect(); let top = rect.bottom + window.scrollY + 5; let left = rect.left + window.scrollX + (rect.width / 2); globalTooltip.style.display = 'block'; if (left + globalTooltip.offsetWidth > window.innerWidth - 10) { left = window.innerWidth - globalTooltip.offsetWidth - 10; } if (top - globalTooltip.offsetHeight < 0 && rect.top - globalTooltip.offsetHeight - 5 > 0) { top = rect.top + window.scrollY - globalTooltip.offsetHeight - 5; } else if (top + globalTooltip.offsetHeight > window.innerHeight + window.scrollY -10) { top = rect.top + window.scrollY - globalTooltip.offsetHeight - 5; } globalTooltip.style.top = `${top}px`; globalTooltip.style.left = `${left}px`; globalTooltip.addEventListener('click', (event) => { event.stopPropagation(); }); }
             function hideTooltip() { globalTooltip.style.display = 'none'; }
+            function handleProviderChange() { const provider = PROVIDER_MODELS[providerSelect.value] || PROVIDER_MODELS.openai; const usesCustomModel = !!provider.customModel; const requiresBaseUrl = !!provider.requiresBaseUrl; modelSelectWrapper.classList.toggle('hidden', usesCustomModel); customModelWrapper.classList.toggle('hidden', !usesCustomModel); baseUrlWrapper.classList.toggle('hidden', !requiresBaseUrl); modelSelect.required = !usesCustomModel; customModelInput.required = usesCustomModel; baseUrlInput.required = requiresBaseUrl; if (usesCustomModel) { providerModelHint.textContent = 'Recommended: use the exact upstream model id'; customModelHint.textContent = 'This will be sent to LiteLLM as `openai/<model>` if no prefix is provided.'; customModelInput.placeholder = 'e.g. mistral-small or openai/mistral-small'; } else { modelSelect.innerHTML = ''; provider.models.forEach(model => { const option = document.createElement('option'); option.value = model.value; option.textContent = `${model.label} (${model.note})`; if (model.recommended) option.selected = true; modelSelect.appendChild(option); }); const selectedModel = provider.models.find(model => model.recommended) || provider.models[0]; providerModelHint.textContent = `Recommended: ${selectedModel.label}`; customModelInput.value = ''; baseUrlInput.value = ''; } apiKeyInput.placeholder = `Enter your ${provider.apiKeyLabel} API key`; }
             function handleFileSelect() { resultsPreviewSection.style.display = 'none'; resultsPreviewContainer.innerHTML = ''; if (csvFileInput.files.length > 0) { fileNameDisplay.textContent = `${csvFileInput.files[0].name}`; clearFileBtn.style.display = 'inline'; } else { fileNameDisplay.textContent = 'No file selected.'; clearFileBtn.style.display = 'none'; } }
             function handleClearFile() { resultsPreviewSection.style.display = 'none'; resultsPreviewContainer.innerHTML = ''; csvFileInput.value = ''; handleFileSelect(); updateStatus('File selection cleared.', false, 'info-message', 3000); }
             function handleAddCategoryClick() { resultsPreviewSection.style.display = 'none'; const currentCount = categoryListDiv.querySelectorAll('.category-item').length; if (currentCount >= MAX_CATEGORIES) { updateStatus(`Cannot add more than ${MAX_CATEGORIES} categories.`, false, 'warning-message'); } else { addCategoryRow(); checkCategoryLimit(); } }
@@ -169,15 +257,16 @@
             function saveCategories() { const { categories } = getCategoriesFromDOM(false); if (categories.length === 0) { updateStatus("Add at least one category to save.", false, 'info-message'); return; } try { localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(categories)); updateStatus("Categories saved successfully.", false, 'success-message', 3000); } catch (e) { console.error("Error saving categories:", e); updateStatus("Error saving categories.", true); } }
             function loadCategories() { try { const storedCategories = localStorage.getItem(CATEGORIES_STORAGE_KEY); if (storedCategories) { const categories = JSON.parse(storedCategories); if (categories && Array.isArray(categories)) { categoryListDiv.innerHTML = ''; const categoriesToLoad = categories.slice(0, MAX_CATEGORIES); categoriesToLoad.forEach(cat => { if (cat && typeof cat.label === 'string' && typeof cat.description === 'string') { const label = cat.label.replace(DISALLOWED_LABEL_REGEX, '').slice(0, MAX_LABEL_LENGTH); const description = cat.description.slice(0, MAX_DESC_LENGTH); addCategoryRow(label, description); } }); if (categoriesToLoad.length > 0) { let msg = `Loaded ${categoriesToLoad.length} categories.`; if(categories.length > MAX_CATEGORIES) msg += ` ${categories.length - MAX_CATEGORIES} saved categories ignored (limit ${MAX_CATEGORIES}).`; updateStatus(msg, false, categories.length > MAX_CATEGORIES ? 'warning-message' : 'success-message', 4000); } else { handleLoadError("No valid categories found in storage."); return; } } else { handleLoadError("Found invalid category data in storage."); return; } } else { updateStatus("No saved categories found.", false, 'info-message', 3000); } } catch (e) { console.error("Error loading categories:", e); handleLoadError("Error loading categories."); return; } finally { if (categoryListDiv.children.length === 0) { addCategoryRow(); } checkCategoryLimit(); } }
             function handleLoadError(message) { updateStatus(message, true); localStorage.removeItem(CATEGORIES_STORAGE_KEY); categoryListDiv.innerHTML = ''; addCategoryRow(); }
+            function getBackendUrl() { if (window.CLASSIFIER_BACKEND_URL) { return `${window.CLASSIFIER_BACKEND_URL.replace(/\/$/, '')}/classify`; } if (window.location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(window.location.hostname)) { return 'http://127.0.0.1:5000/classify'; } return `${window.location.origin}/classify`; }
             function robustParseCsvLine(line) { const cells = []; let currentCell = ''; let inQuotes = false; for (let i = 0; i < line.length; i++) { const char = line[i]; if (char === '"') { if (inQuotes && i + 1 < line.length && line[i+1] === '"') { currentCell += '"'; i++; } else { inQuotes = !inQuotes; } } else if (char === ',' && !inQuotes) { cells.push(currentCell.trim()); currentCell = ''; } else { currentCell += char; } } cells.push(currentCell.trim()); return cells; }
             function displayResultsPreview(csvText, textColumnName) { resultsPreviewContainer.innerHTML = ''; resultsPreviewSection.style.display = 'none'; const lines = csvText.trim().split(/\r\n|\r|\n/); if (lines.length < 1) { updateStatus("Preview: CSV empty.", true); return; } const table = document.createElement('table'); table.id = 'results-preview-table'; const thead = document.createElement('thead'); const tbody = document.createElement('tbody'); const headerRow = document.createElement('tr'); const allHeaders = robustParseCsvLine(lines[0]).map(h => h.trim()); const textColIndex = allHeaders.indexOf(textColumnName); const categoryColIndex = allHeaders.indexOf('Assigned Category'); const justificationColIndex = allHeaders.indexOf('Justification'); if (textColIndex === -1) { updateStatus(`Preview error: Column "${textColumnName}" not found. Available: ${allHeaders.join(', ')}`, true); return; } if (categoryColIndex === -1) { updateStatus(`Preview error: 'Assigned Category' column missing. Available: ${allHeaders.join(', ')}`, true); return; } if (justificationColIndex === -1) { updateStatus(`Preview error: 'Justification' column missing. Available: ${allHeaders.join(', ')}`, true); return; } const previewHeaders = [ { displayName: `Original Text (${textColumnName})`, index: textColIndex }, { displayName: 'Assigned Category', index: categoryColIndex }, { displayName: 'Justification', index: justificationColIndex } ]; previewHeaders.forEach(headerInfo => { const th = document.createElement('th'); th.textContent = headerInfo.displayName; headerRow.appendChild(th); }); thead.appendChild(headerRow); table.appendChild(thead); const rowsToDisplay = lines.slice(1, PREVIEW_ROW_LIMIT + 1); if (rowsToDisplay.length === 0 && lines.length > 1) { updateStatus("No data rows to preview. Full file downloaded.", false, 'info-message'); } rowsToDisplay.forEach(line => { const cells = robustParseCsvLine(line); const tr = document.createElement('tr'); previewHeaders.forEach(headerInfo => { const td = document.createElement('td'); td.textContent = (cells.length > headerInfo.index && cells[headerInfo.index] !== undefined) ? cells[headerInfo.index].trim() : ''; tr.appendChild(td); }); tbody.appendChild(tr); }); table.appendChild(tbody); resultsPreviewContainer.appendChild(table); resultsPreviewSection.style.display = 'block'; }
-            async function handleFormSubmit(event) { event.preventDefault(); resultsPreviewSection.style.display = 'none'; resultsPreviewContainer.innerHTML = ''; let formIsValid = true; if (!csvFileInput.files[0]) { updateStatus('Please select a CSV or Excel file.', true); formIsValid = false; } const columnName = textColumnInput.value; textColumnInput.classList.remove('invalid'); if (!columnName.trim() || columnName.length > MAX_LABEL_LENGTH || !ALLOWED_LABEL_REGEX.test(columnName)) { updateStatus('Please enter a valid column name (max 50 chars, letters/numbers/spaces/_ only).', true); textColumnInput.classList.add('invalid'); formIsValid = false; } const { categories, isValid: categoriesAreValid } = getCategoriesFromDOM(true); if (categoryListDiv.querySelectorAll('.category-item').length === 0) { updateStatus('Please define at least one category.', true); formIsValid = false; } else if (!categoriesAreValid) { updateStatus('Please fix the errors in category definitions.', true); formIsValid = false; } if (!formIsValid) return; const validCategories = categories.filter(cat => cat.label.trim() && cat.label.length <= MAX_LABEL_LENGTH && ALLOWED_LABEL_REGEX.test(cat.label) && cat.description.trim() && cat.description.length <= MAX_DESC_LENGTH ); if(validCategories.length === 0) { updateStatus('No valid categories defined.', true); return; } const formData = new FormData(); formData.append('csv_file', csvFileInput.files[0]); formData.append('text_column', columnName.trim()); formData.append('categories', JSON.stringify(validCategories)); setLoading(true, 'Processing file, please wait...'); currentAbortController = new AbortController(); const signal = currentAbortController.signal; try { const backendUrl = 'https://classifyit.onrender.com/classify'; const response = await fetch(backendUrl, { method: 'POST', body: formData, signal: signal }); if (response.ok) { updateStatus('Processing complete. Preparing download & preview...', false, 'success-message'); const blob = await response.blob(); if (blob.type.includes('application/json')) { const errorData = await blob.text(); const errorJson = JSON.parse(errorData); throw new Error(errorJson.error || 'Backend JSON error.'); } else if (!blob.type.includes('text/csv') && blob.size > 0) { console.warn("Unexpected blob type:", blob.type); } else if (blob.size === 0) { throw new Error("Empty response from server."); } const csvText = await blob.text(); displayResultsPreview(csvText, columnName); triggerDownload(new Blob([csvText], { type: 'text/csv;charset=utf-8;' })); updateStatus('Classification successful! Preview shown & download started.', false, 'success-message', 7000); } else { let errorMsg = `Server error: ${response.status} ${response.statusText}`; try { const errorData = await response.json(); errorMsg = errorData.error || JSON.stringify(errorData); } catch (e) { console.warn("Non-JSON error response."); } throw new Error(errorMsg); } } catch (error) { resultsPreviewSection.style.display = 'none'; if (error.name === 'AbortError') { console.log('Fetch aborted by user.'); updateStatus('Processing cancelled by user.', false, 'info-message'); } else { console.error('Submission Error:', error); updateStatus(`Error: ${error.message}.`, true); } } finally { setLoading(false); currentAbortController = null; hideTooltip(); } }
+            async function handleFormSubmit(event) { event.preventDefault(); resultsPreviewSection.style.display = 'none'; resultsPreviewContainer.innerHTML = ''; let formIsValid = true; const providerName = providerSelect.value.trim(); const provider = PROVIDER_MODELS[providerName]; const modelName = (provider && provider.customModel ? customModelInput.value : modelSelect.value).trim(); const apiKey = apiKeyInput.value.trim(); const baseUrl = baseUrlInput.value.trim(); providerSelect.classList.remove('invalid'); modelSelect.classList.remove('invalid'); customModelInput.classList.remove('invalid'); apiKeyInput.classList.remove('invalid'); baseUrlInput.classList.remove('invalid'); if (!providerName || !provider) { updateStatus('Please choose a supported model provider.', true); providerSelect.classList.add('invalid'); formIsValid = false; } if (!modelName) { updateStatus('Please choose or enter a model for the selected provider.', true); if (provider && provider.customModel) customModelInput.classList.add('invalid'); else modelSelect.classList.add('invalid'); formIsValid = false; } if (provider && provider.requiresBaseUrl && !baseUrl) { updateStatus('Please enter a base URL for the OpenAI-compatible provider.', true); baseUrlInput.classList.add('invalid'); formIsValid = false; } if (!apiKey) { updateStatus('Please enter an API key for the selected provider.', true); apiKeyInput.classList.add('invalid'); formIsValid = false; } if (!csvFileInput.files[0]) { updateStatus('Please select a CSV or Excel file.', true); formIsValid = false; } const columnName = textColumnInput.value; textColumnInput.classList.remove('invalid'); if (!columnName.trim() || columnName.length > MAX_LABEL_LENGTH || !ALLOWED_LABEL_REGEX.test(columnName)) { updateStatus('Please enter a valid column name (max 50 chars, letters/numbers/spaces/_ only).', true); textColumnInput.classList.add('invalid'); formIsValid = false; } const { categories, isValid: categoriesAreValid } = getCategoriesFromDOM(true); if (categoryListDiv.querySelectorAll('.category-item').length === 0) { updateStatus('Please define at least one category.', true); formIsValid = false; } else if (!categoriesAreValid) { updateStatus('Please fix the errors in category definitions.', true); formIsValid = false; } if (!formIsValid) return; const validCategories = categories.filter(cat => cat.label.trim() && cat.label.length <= MAX_LABEL_LENGTH && ALLOWED_LABEL_REGEX.test(cat.label) && cat.description.trim() && cat.description.length <= MAX_DESC_LENGTH ); if(validCategories.length === 0) { updateStatus('No valid categories defined.', true); return; } const selectedModelText = provider && provider.customModel ? modelName : (modelSelect.options[modelSelect.selectedIndex] ? modelSelect.options[modelSelect.selectedIndex].text : modelName); const formData = new FormData(); formData.append('model_provider', providerName); formData.append('model_name', modelName); formData.append('api_key', apiKey); if (baseUrl) formData.append('base_url', baseUrl); formData.append('csv_file', csvFileInput.files[0]); formData.append('text_column', columnName.trim()); formData.append('categories', JSON.stringify(validCategories)); setLoading(true, `Processing with ${selectedModelText}...`); currentAbortController = new AbortController(); const signal = currentAbortController.signal; try { const backendUrl = getBackendUrl(); const response = await fetch(backendUrl, { method: 'POST', body: formData, signal: signal }); if (response.ok) { updateStatus('Processing complete. Preparing download & preview...', false, 'success-message'); const blob = await response.blob(); if (blob.type.includes('application/json')) { const errorData = await blob.text(); const errorJson = JSON.parse(errorData); throw new Error(errorJson.error || 'Backend JSON error.'); } else if (!blob.type.includes('text/csv') && blob.size > 0) { console.warn("Unexpected blob type:", blob.type); } else if (blob.size === 0) { throw new Error("Empty response from server."); } const csvText = await blob.text(); displayResultsPreview(csvText, columnName); triggerDownload(new Blob([csvText], { type: 'text/csv;charset=utf-8;' })); updateStatus('Classification successful! Preview shown & download started.', false, 'success-message', 7000); } else { let errorMsg = `Server error: ${response.status} ${response.statusText}`; try { const errorData = await response.json(); errorMsg = errorData.error || JSON.stringify(errorData); } catch (e) { console.warn("Non-JSON error response."); } throw new Error(errorMsg); } } catch (error) { resultsPreviewSection.style.display = 'none'; if (error.name === 'AbortError') { console.log('Fetch aborted by user.'); updateStatus('Processing cancelled by user.', false, 'info-message'); } else { console.error('Submission Error:', error); updateStatus(`Error: ${error.message}.`, true); } } finally { setLoading(false); currentAbortController = null; hideTooltip(); } }
             function handleCancelClick() { resultsPreviewSection.style.display = 'none'; if (currentAbortController) { currentAbortController.abort(); console.log("Cancel button clicked, aborting fetch."); hideTooltip(); } }
             function triggerDownload(blob) { const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.style.display = 'none'; a.href = url; const timestamp = new Date().toISOString().replace(/[:.]/g, '-'); a.download = `classified_output_${timestamp}.csv`; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); document.body.removeChild(a); }
-            function setLoading(isLoading, message = 'Status: Ready') { resultsPreviewSection.style.display = isLoading ? 'none' : resultsPreviewSection.style.display; submitBtn.disabled = isLoading; cancelBtn.style.display = isLoading ? 'inline-block' : 'none'; loadingIndicator.style.display = isLoading ? 'block' : 'none'; addCategoryBtn.disabled = isLoading || (categoryListDiv.querySelectorAll('.category-item').length >= MAX_CATEGORIES); saveCategoriesBtn.disabled = isLoading; loadCategoriesBtn.disabled = isLoading; clearFileBtn.disabled = isLoading; csvFileInput.disabled = isLoading; textColumnInput.disabled = isLoading; categoryListDiv.querySelectorAll('input, textarea, button').forEach(el => el.disabled = isLoading); if (isLoading) { updateStatus(message, false); } else { checkCategoryLimit(); } }
+            function setLoading(isLoading, message = 'Status: Ready') { resultsPreviewSection.style.display = isLoading ? 'none' : resultsPreviewSection.style.display; submitBtn.disabled = isLoading; cancelBtn.style.display = isLoading ? 'inline-block' : 'none'; loadingIndicator.style.display = isLoading ? 'block' : 'none'; addCategoryBtn.disabled = isLoading || (categoryListDiv.querySelectorAll('.category-item').length >= MAX_CATEGORIES); saveCategoriesBtn.disabled = isLoading; loadCategoriesBtn.disabled = isLoading; clearFileBtn.disabled = isLoading; csvFileInput.disabled = isLoading; textColumnInput.disabled = isLoading; providerSelect.disabled = isLoading; modelSelect.disabled = isLoading; customModelInput.disabled = isLoading; apiKeyInput.disabled = isLoading; baseUrlInput.disabled = isLoading; categoryListDiv.querySelectorAll('input, textarea, button').forEach(el => el.disabled = isLoading); if (isLoading) { updateStatus(message, false); } else { checkCategoryLimit(); } }
             function updateStatus(message, isError = false, messageClass = '', clearAfterMs = 0) { if (statusClearTimeout) { clearTimeout(statusClearTimeout); statusClearTimeout = null; } statusMessage.textContent = message; statusMessage.className = 'status-message'; if (messageClass) { statusMessage.classList.add(messageClass); } else if (isError) { statusMessage.classList.add('error-message'); } if(isError) { submitBtn.disabled = false; cancelBtn.style.display = 'none'; } if (!isError && clearAfterMs > 0) { statusClearTimeout = setTimeout(() => { if (statusMessage.textContent === message) { statusMessage.textContent = 'Status: Ready'; statusMessage.className = 'status-message'; } statusClearTimeout = null; }, clearAfterMs); } }
             function escapeHtml(unsafe) { if (typeof unsafe !== 'string') return unsafe; return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
-            loadCategories(); handleColumnInput();
+            loadCategories(); handleColumnInput(); handleProviderChange();
             document.querySelectorAll('.remove-category-btn').forEach(btn => btn.title = "Remove this category definition");
             checkCategoryLimit();
         });
