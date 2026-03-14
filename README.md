@@ -163,8 +163,13 @@ If they do not want to use Blueprint:
 2. Connect the repo.
 3. Use:
    * Build command: `pip install -r requirements.txt`
-   * Start command: `gunicorn app:app`
+   * Start command: `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1`
 4. Deploy on the free plan.
+
+Render note:
+* Classification can take longer than 30 seconds because the app processes rows one by one and makes LLM calls.
+* A default Gunicorn timeout can cause `502` errors on Render for longer jobs.
+* This repo now uses a higher timeout in `render.yaml`, `Procfile`, and `Dockerfile`.
 
 ## Usage
 
