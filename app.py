@@ -219,9 +219,8 @@ Justification: <Your brief explanation>
 
 
 # --- API Endpoint for Classification ---
-# ... (Decorator includes rate limit: @limiter.limit("3 per hour")) ...
 @app.route('/classify', methods=['POST'])
-@limiter.limit("3 per hour")
+@limiter.exempt
 def classify_csv():
     print("\n=== Received request on /classify ===")
     # 1. --- Input Validation ---
@@ -320,6 +319,7 @@ def privacy():
 
 
 @app.route('/health')
+@limiter.exempt
 def health():
     return jsonify({"status": "ok"})
 
