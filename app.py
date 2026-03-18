@@ -18,9 +18,7 @@ print("Attempted to load environment variables from .env")
 app = Flask(__name__)
 
 # --- Configuration ---
-# ** UPDATED File Size Limit (30 KB = 30 * 1024 bytes) **
-app.config['MAX_CONTENT_LENGTH'] = 30 * 1024
-print(f"MAX_CONTENT_LENGTH set to {app.config['MAX_CONTENT_LENGTH']} bytes ({app.config['MAX_CONTENT_LENGTH']/1024:.0f} KB)")
+# No explicit upload file size limit.
 
 # CORS Configuration
 CORS(app)
@@ -101,10 +99,8 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 @app.errorhandler(413)
 def request_entity_too_large(error):
     """ Custom JSON response for file size limit exceeded. """
-    # ** UPDATED error message to reflect 30KB limit **
-    limit_kb = app.config['MAX_CONTENT_LENGTH']/1024
-    print(f"Error 413: Request entity too large (limit: {limit_kb:.0f} KB).")
-    return jsonify(error=f"File size exceeds limit ({limit_kb:.0f} KB). Please upload a smaller file."), 413
+    print("Error 413: Request entity too large.")
+    return jsonify(error="File size exceeds the server limit. Please upload a smaller file."), 413
 
 # --- Custom Error Handler for 429 Rate Limit Exceeded --- (Same as before)
 @app.errorhandler(429)
