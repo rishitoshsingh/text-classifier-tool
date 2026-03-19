@@ -11,7 +11,7 @@ A web application that allows users to upload a CSV/Excel file, define custom la
 ## Features
 
 * Upload CSV or Excel files.
-* Define custom classification labels (up to 50 chars: letters, numbers, spaces, underscore) and descriptions (up to 300 chars).
+* Define custom classification labels (up to 50 chars: letters, numbers, spaces, underscore) and descriptions (up to 1000 chars).
 * Limit of 10 categories per classification task.
 * Save and load category definitions locally in the browser (`localStorage`).
 * Specify the column containing the text to classify (up to 50 chars: letters, numbers, spaces, underscore).

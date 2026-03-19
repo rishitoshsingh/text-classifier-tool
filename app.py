@@ -3,13 +3,14 @@ import os
 import io
 import json
 import re
-import pandas as pd
+import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
-from litellm import completion
 
 # Load environment variables
 load_dotenv()
@@ -94,6 +95,125 @@ else:
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
+# --- Background job state ---
+jobs = {}  # job_id -> job info dict
+jobs_lock = threading.Lock()
+executor = ThreadPoolExecutor(max_workers=int(os.getenv("MAX_WORKERS", "2")))
+
+
+def _get_job(job_id):
+    with jobs_lock:
+        return jobs.get(job_id)
+
+
+def _update_job(job_id, **fields):
+    with jobs_lock:
+        if job_id not in jobs:
+            return
+        jobs[job_id].update(fields)
+
+
+def process_classification_job(
+    job_id,
+    file_bytes,
+    filename,
+    text_column_name,
+    categories_list,
+    provider_name,
+    model_name,
+    api_key,
+    api_base,
+):
+    """
+    Run classification in a background thread and store the CSV + progress in the global `jobs` dict.
+    """
+    import pandas as pd
+
+    cancel_event = None
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return
+        cancel_event = job.get("cancel_event")
+
+    def is_cancelled():
+        return cancel_event is not None and cancel_event.is_set()
+
+    _update_job(job_id, status="running", progress_current=0)
+    try:
+        file_stream = io.BytesIO(file_bytes)
+        df = None
+        if filename.lower().endswith(".csv"):
+            try:
+                df = pd.read_csv(file_stream, encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                file_stream.seek(0)
+                df = pd.read_csv(file_stream, encoding="utf-8")
+        elif filename.lower().endswith((".xls", ".xlsx")):
+            df = pd.read_excel(file_stream, engine="openpyxl")
+        else:
+            raise ValueError("Unsupported file type. Use .csv, .xls, .xlsx.")
+
+        total_rows = len(df)
+        _update_job(job_id, progress_total=total_rows, message=f"Found {total_rows} rows.")
+
+        results_labels = []
+        results_justifications = []
+        row_count = 0
+
+        if total_rows == 0:
+            df["Assigned Category"] = []
+            df["Justification"] = []
+        else:
+            print(f"[job {job_id}] Starting {provider_name} classification with {model_name} for {total_rows} rows...")
+            for _, row in df.iterrows():
+                if is_cancelled():
+                    _update_job(job_id, status="cancelled", message="Cancelled by user.")
+                    return
+
+                row_count += 1
+                text_to_classify_raw = row[text_column_name]
+                text_to_classify = str(text_to_classify_raw) if pd.notna(text_to_classify_raw) else ""
+                if not text_to_classify.strip():
+                    label, justification = "no category", "Text field empty."
+                else:
+                    llm_result = classify_text_with_llm(
+                        text_to_classify,
+                        categories_list,
+                        provider_name,
+                        model_name,
+                        api_key,
+                        api_base,
+                    )
+                    label = llm_result.get("label", "error")
+                    justification = llm_result.get("justification", "Error retrieving justification.")
+
+                results_labels.append(label)
+                results_justifications.append(justification)
+
+                # Update progress occasionally to reduce contention.
+                if row_count % 5 == 0 or row_count == total_rows:
+                    _update_job(
+                        job_id,
+                        progress_current=row_count,
+                        message=f"Processed {row_count}/{total_rows} rows...",
+                    )
+
+            df["Assigned Category"] = results_labels
+            df["Justification"] = results_justifications
+
+        # Generate output CSV in memory
+        output_csv_stream = io.StringIO()
+        df.to_csv(output_csv_stream, index=False, encoding="utf-8")
+        csv_data = output_csv_stream.getvalue()
+        output_csv_stream.close()
+
+        _update_job(job_id, status="done", progress_current=row_count, csv_data=csv_data, message="Done.")
+    except Exception as e:
+        _update_job(job_id, status="error", message=str(e))
+        print(f"[job {job_id}] ERROR: {e}")
+
+
 
 # --- Custom Error Handler for 413 Request Entity Too Large ---
 @app.errorhandler(413)
@@ -151,6 +271,9 @@ def get_model_name(provider_name, requested_model_name=""):
 
 
 def classify_text_with_llm(text_to_classify, categories, provider_name, model_name, api_key, api_base=""):
+    # Lazy import to keep app startup fast for Render health checks.
+    from litellm import completion
+
     provider_config = get_provider_config(provider_name)
     if not provider_config:
         return {"label": "error", "justification": "Unsupported model provider."}
@@ -218,90 +341,151 @@ Justification: <Your brief explanation>
 @app.route('/classify', methods=['POST'])
 @limiter.exempt
 def classify_csv():
-    print("\n=== Received request on /classify ===")
+    print("\n=== Received request on /classify (job start) ===")
+
     # 1. --- Input Validation ---
-    if 'csv_file' not in request.files: return jsonify({"error": "No file part"}), 400
+    if 'csv_file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
     file = request.files['csv_file']
-    if file.filename == '': return jsonify({"error": "No selected file"}), 400
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
     provider_name = request.form.get('model_provider', '').strip().lower()
     provider_config = get_provider_config(provider_name)
     if not provider_config:
         supported_providers = ", ".join(PROVIDER_CONFIGS.keys())
         return jsonify({"error": f"Unsupported model provider. Choose one of: {supported_providers}"}), 400
+
     model_name = get_model_name(provider_name, request.form.get('model_name', ''))
     if not model_name:
         return jsonify({"error": f"Unsupported model for {provider_config['display_name']}."}), 400
+
     api_base = get_api_base(provider_name, request.form.get('base_url', ''))
     if provider_config.get("requires_base_url") and not api_base:
         return jsonify({"error": f"Base URL missing for {provider_config['display_name']}."}), 400
+
     api_key = get_api_key(provider_name, request.form.get('api_key', ''))
     if not api_key:
         return jsonify({"error": f"API key missing for {provider_config['display_name']}."}), 400
-    if not request.form.get('text_column'): return jsonify({"error": "Text column name missing"}), 400
-    if not request.form.get('categories'): return jsonify({"error": "Categories definition missing"}), 400
+
+    if not request.form.get('text_column'):
+        return jsonify({"error": "Text column name missing"}), 400
+    if not request.form.get('categories'):
+        return jsonify({"error": "Categories definition missing"}), 400
+
     text_column_name = request.form['text_column']
     categories_json_string = request.form['categories']
-    print(f"Using provider: {provider_config['display_name']} ({model_name})")
-    if api_base:
-        print(f"Using API base: {api_base}")
-    try: # Category validation
+
+    try:
         categories_list = json.loads(categories_json_string)
-        if not isinstance(categories_list, list) or not categories_list: raise ValueError("Categories must be a non-empty list.")
+        if not isinstance(categories_list, list) or not categories_list:
+            raise ValueError("Categories must be a non-empty list.")
         for item in categories_list:
-            if not isinstance(item, dict) or 'label' not in item or 'description' not in item: raise ValueError("Invalid category structure.")
-            if not item['label'].strip() or not item['description'].strip(): raise ValueError("Category label/desc empty.")
-        print(f"Received {len(categories_list)} valid categories.")
-    except (json.JSONDecodeError, ValueError) as e: return jsonify({"error": f"Invalid categories format: {e}"}), 400
+            if not isinstance(item, dict) or 'label' not in item or 'description' not in item:
+                raise ValueError("Invalid category structure.")
+            if not item['label'].strip() or not item['description'].strip():
+                raise ValueError("Category label/desc empty.")
+    except (json.JSONDecodeError, ValueError) as e:
+        return jsonify({"error": f"Invalid categories format: {e}"}), 400
 
-    # 2. --- File Parsing (CSV or Excel) ---
-    filename = file.filename; df = None; print(f"Parsing file: {filename}")
-    try:
-        if filename.lower().endswith('.csv'):
-            print("Reading CSV...")
-            file_stream = io.BytesIO(file.stream.read())
-            try: df = pd.read_csv(file_stream, encoding='utf-8-sig')
-            except UnicodeDecodeError: file_stream.seek(0); df = pd.read_csv(file_stream, encoding='utf-8')
-            except Exception as csv_e: raise ValueError(f"CSV parsing error: {csv_e}") from csv_e
-        elif filename.lower().endswith(('.xls', '.xlsx')):
-            print(f"Reading Excel ({filename.split('.')[-1]})...")
-            file_stream = io.BytesIO(file.stream.read())
-            df = pd.read_excel(file_stream, engine='openpyxl')
-        else: return jsonify({"error": f"Unsupported file type. Use .csv, .xls, .xlsx."}), 400
-        print(f"Parsed DataFrame shape: {df.shape}")
-        if df.empty and len(df.columns) == 0: raise pd.errors.EmptyDataError("File empty.")
-        if text_column_name not in df.columns: available_columns = list(df.columns); return jsonify({"error": f"Column '{text_column_name}' not found.", "available_columns": available_columns}), 400
-    except UnicodeDecodeError as e: return jsonify({"error": f"File encoding error: {e}. Use UTF-8."}), 400
-    except pd.errors.EmptyDataError as e: return jsonify({"error": f"File contains no data: {e}"}), 400
-    except ImportError: return jsonify({"error": "Need 'openpyxl' for Excel. `pip install openpyxl`."}), 500
-    except Exception as e: print(f"Error parsing file: {e}"); return jsonify({"error": f"Error reading file: {e}"}), 400
+    filename = file.filename
+    file_bytes = file.stream.read()
+    job_id = str(uuid.uuid4())
+    cancel_event = threading.Event()
 
-    # 3. --- Processing Loop & LLM Calls ---
-    results_labels = []; results_justifications = []; row_count = 0
-    if df.empty: print("DataFrame empty. Skipping processing.")
-    else:
-        print(f"Starting {provider_config['display_name']} classification with {model_name} for {len(df)} rows...")
-        try:
-            for index, row in df.iterrows():
-                 row_count += 1; text_to_classify_raw = row[text_column_name]; text_to_classify = str(text_to_classify_raw) if pd.notna(text_to_classify_raw) else ""
-                 if not text_to_classify.strip(): label, justification = "no category", "Text field empty."
-                 else: llm_result = classify_text_with_llm(text_to_classify, categories_list, provider_name, model_name, api_key, api_base); label = llm_result.get("label", "error"); justification = llm_result.get("justification", "Error retrieving justification.")
-                 results_labels.append(label); results_justifications.append(justification)
-                 if row_count % 10 == 0 or row_count == len(df): print(f"  Processed {row_count}/{len(df)} rows...")
-        except Exception as e: print(f"!!! Error during processing loop near row {row_count}: {e}"); return jsonify({"error": f"Processing error near row {row_count}: {e}"}), 500
-        print(f"Finished {provider_config['display_name']} classification processing.")
-    df['Assigned Category'] = results_labels; df['Justification'] = results_justifications
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "queued",
+            "progress_current": 0,
+            "progress_total": 0,
+            "message": "Queued.",
+            "csv_data": None,
+            "error": None,
+            "cancel_event": cancel_event,
+        }
 
-    # 4. --- Generate Output CSV ---
-    try:
-        output_csv_stream = io.StringIO();
-        if 'Assigned Category' not in df.columns: df['Assigned Category'] = []
-        if 'Justification' not in df.columns: df['Justification'] = []
-        df.to_csv(output_csv_stream, index=False, encoding='utf-8'); csv_data = output_csv_stream.getvalue(); output_csv_stream.close(); print("Generated output CSV.")
-    except Exception as e: print(f"Error generating output CSV: {e}"); return jsonify({"error": f"Failed to generate output CSV: {e}"}), 500
+    executor.submit(
+        process_classification_job,
+        job_id,
+        file_bytes,
+        filename,
+        text_column_name,
+        categories_list,
+        provider_name,
+        model_name,
+        api_key,
+        api_base,
+    )
 
-    # 5. --- Return CSV Response ---
-    print("Sending CSV response.")
-    return Response( csv_data, mimetype="text/csv", headers={ "Content-Disposition": "attachment;filename=classified_output.csv", "Content-Type": "text/csv; charset=utf-8" } )
+    return jsonify({"job_id": job_id, "status": "queued"}), 202
+
+
+@app.route('/classify/progress', methods=['GET'])
+@limiter.exempt
+def classify_progress():
+    job_id = request.args.get("job_id", "").strip()
+    if not job_id:
+        return jsonify({"error": "job_id required"}), 400
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(
+        {
+            "job_id": job_id,
+            "status": job.get("status"),
+            "progress_current": job.get("progress_current", 0),
+            "progress_total": job.get("progress_total", 0),
+            "message": job.get("message", ""),
+        }
+    )
+
+
+@app.route('/classify/cancel', methods=['POST'])
+@limiter.exempt
+def classify_cancel():
+    job_id = request.args.get("job_id", "").strip() or request.form.get("job_id", "").strip()
+    if not job_id:
+        return jsonify({"error": "job_id required"}), 400
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    current_status = job.get("status")
+    if current_status in ("done", "error", "cancelled"):
+        return jsonify({"job_id": job_id, "status": current_status})
+    cancel_event = job.get("cancel_event")
+    if cancel_event:
+        cancel_event.set()
+    _update_job(job_id, status="cancelling", message="Cancelling...")
+    return jsonify({"job_id": job_id, "status": "cancelling"})
+
+
+@app.route('/classify/result', methods=['GET'])
+@limiter.exempt
+def classify_result():
+    job_id = request.args.get("job_id", "").strip()
+    if not job_id:
+        return jsonify({"error": "job_id required"}), 400
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    status = job.get("status")
+    if status in ("queued", "running", "cancelling"):
+        return jsonify({"error": f"Job not ready. Current status: {status}"}), 425
+    if status == "done":
+        csv_data = job.get("csv_data") or ""
+        return Response(
+            csv_data,
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": "attachment;filename=classified_output.csv",
+                "Content-Type": "text/csv; charset=utf-8",
+            },
+        )
+    if status == "cancelled":
+        return jsonify({"error": "Job cancelled"}), 410
+    if status == "error":
+        return jsonify({"error": job.get("message", "Job failed")}), 500
+    return jsonify({"error": f"Unhandled job status: {status}"}), 500
 
 @app.route('/')
 def index():
