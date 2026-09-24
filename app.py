@@ -39,46 +39,28 @@ PROVIDER_CONFIGS = {
     "openai": {
         "display_name": "OpenAI",
         "env_var": "OPENAI_API_KEY",
-        "default_model": "openai/gpt-4o-mini",
-        "models": {
-            "openai/gpt-4o-mini": "GPT-4o mini",
-            "openai/gpt-4.1-mini": "GPT-4.1 mini",
-            "openai/gpt-4.1-nano": "GPT-4.1 nano",
-        },
+        "default_model": "openai/gpt-4.1-mini",
     },
     "gemini": {
         "display_name": "Gemini",
         "env_var": "GEMINI_API_KEY",
-        "default_model": "gemini/gemini-2.0-flash-lite",
-        "models": {
-            "gemini/gemini-2.0-flash-lite": "Gemini 2.0 Flash-Lite",
-            "gemini/gemini-2.0-flash": "Gemini 2.0 Flash",
-            "gemini/gemini-1.5-flash": "Gemini 1.5 Flash",
-        },
+        "default_model": "gemini/gemini-3.5-flash-lite",
     },
     "groq": {
         "display_name": "Groq",
         "env_var": "GROQ_API_KEY",
-        "default_model": "groq/llama-3.1-8b-instant",
-        "models": {
-            "groq/llama-3.1-8b-instant": "Llama 3.1 8B Instant",
-            "groq/gemma2-9b-it": "Gemma 2 9B IT",
-            "groq/llama-3.3-70b-versatile": "Llama 3.3 70B Versatile",
-        },
+        "default_model": "groq/openai/gpt-oss-20b",
     },
     "anthropic": {
         "display_name": "Anthropic",
         "env_var": "ANTHROPIC_API_KEY",
-        "default_model": "anthropic/claude-3-5-haiku-latest",
-        "models": {
-            "anthropic/claude-3-5-haiku-latest": "Claude 3.5 Haiku",
-        },
+        "default_model": "anthropic/claude-haiku-4-5",
     },
     "openai_compatible": {
         "display_name": "OpenAI-Compatible",
         "env_var": "OPENAI_COMPATIBLE_API_KEY",
         "env_base_var": "OPENAI_COMPATIBLE_BASE_URL",
-        "allow_custom_model": True,
+        "litellm_prefix": "openai",
         "requires_base_url": True,
     },
 }
@@ -255,19 +237,15 @@ def get_api_base(provider_name, request_api_base=""):
 
 
 def get_model_name(provider_name, requested_model_name=""):
+    """Accept any model id; add the LiteLLM provider prefix if it is missing."""
     provider_config = get_provider_config(provider_name)
     if not provider_config:
         return None
     model_name = (requested_model_name or "").strip()
-    if provider_config.get("allow_custom_model"):
-        if not model_name:
-            return None
-        return model_name if model_name.startswith("openai/") else f"openai/{model_name}"
     if not model_name:
-        return provider_config["default_model"]
-    if model_name in provider_config["models"]:
-        return model_name
-    return None
+        return provider_config.get("default_model")
+    prefix = provider_config.get("litellm_prefix", provider_name.strip().lower()) + "/"
+    return model_name if model_name.startswith(prefix) else prefix + model_name
 
 
 def classify_text_with_llm(text_to_classify, categories, provider_name, model_name, api_key, api_base=""):
@@ -310,7 +288,7 @@ Justification: <Your brief explanation>
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.5,
-            "max_tokens": 100,
+            "max_tokens": 1024,  # reasoning models (gpt-oss, qwen3, Gemini 3) think before answering
             "api_key": api_key,
         }
         if api_base:

@@ -16,7 +16,7 @@ A web application that allows users to upload a CSV/Excel file, define custom la
 * Save and load category definitions locally in the browser (`localStorage`).
 * Specify the column containing the text to classify (up to 50 chars: letters, numbers, spaces, underscore).
 * Backend processing using LiteLLM with selectable providers such as OpenAI, Gemini, Groq, Anthropic, and OpenAI-compatible endpoints.
-* Frontend controls for choosing the model provider, selecting a model, and entering the API key to use for the current request.
+* Frontend controls for choosing the model provider, picking a model (free Groq and Gemini models are marked ★) or typing any model id, and entering the API key to use for the current request.
 * Support for OpenAI-compatible APIs with a custom `base_url` and custom model name.
 * Provides justification from the LLM for each classification.
 * Handles missing/empty text fields.
@@ -175,7 +175,7 @@ Render note:
 
 1.  Open the deployed app URL in your browser.
 2.  Choose a model provider.
-3.  Select a model from the dropdown. If you choose `OpenAI-Compatible`, enter a custom model name and base URL instead.
+3.  Pick a model from the dropdown (★ = free tier), or choose **Other** and type any model id. For `OpenAI-Compatible`, also enter the base URL.
 4.  Enter the API key you want to use for this run.
 5.  Click "Choose File" and select a CSV or Excel file. If you select the wrong file, click the "×" button to clear it.
 6.  Enter the exact name of the column in your file that contains the text you want to classify (validation rules apply).
